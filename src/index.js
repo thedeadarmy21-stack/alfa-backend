@@ -8,7 +8,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const path = require("path");
 
-const { startFakeWorker } = require("./workers/fake.worker");
+// const { startFakeWorker } = require("./workers/fake.worker");
 
 const authRoutes = require("./auth/auth.routes");
 const usersRoutes = require("./users/users.routes");
@@ -80,6 +80,6 @@ app.listen(PORT, () => {
   console.log(`API running on port ${PORT}`);
   // Agar production hai toh worker ko yahan se start na karein
   if (process.env.NODE_ENV !== 'production') {
-    startFakeWorker();
+   // startFakeWorker();
   }
 });
