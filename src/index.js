@@ -77,6 +77,9 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`API running on http://localhost:${PORT}`);
-  startFakeWorker();
+  console.log(`API running on port ${PORT}`);
+  // Agar production hai toh worker ko yahan se start na karein
+  if (process.env.NODE_ENV !== 'production') {
+    startFakeWorker();
+  }
 });
