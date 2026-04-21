@@ -176,39 +176,49 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const sourceText = await transcribeAudio(tempInputPath, original_lang);
 
+      // ✅ CHANGE 1: Translation condition improve
+      const shouldTranslate = target_lang && target_lang !== original_lang;
+
       let finalText = sourceText;
-      if (target_lang !== original_lang) {
+      if (shouldTranslate) {
         finalText = await translateText(sourceText, target_lang, original_lang);
       }
 
+      // ✅ CHANGE 2: TTS conditional on shouldTranslate
       let ttsAudioUrl = null;
-      try {
-        tempTtsPath = await generateSpeech(
-          finalText,
-          target_lang || original_lang || "en"
-        );
 
-        if (tempTtsPath) {
-          if (tempTtsPath.startsWith("http://") || tempTtsPath.startsWith("https://")) {
-            ttsAudioUrl = tempTtsPath;
-          } else {
-            const absoluteTtsPath = path.isAbsolute(tempTtsPath)
-              ? tempTtsPath
-              : path.join(process.cwd(), tempTtsPath.replace(/^\//, ""));
-            ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
+      if (shouldTranslate) {
+        try {
+          tempTtsPath = await generateSpeech(finalText, target_lang || original_lang || "en");
+
+          if (tempTtsPath) {
+            if (tempTtsPath.startsWith("http://") || tempTtsPath.startsWith("https://")) {
+              ttsAudioUrl = tempTtsPath;
+            } else {
+              const absoluteTtsPath = path.isAbsolute(tempTtsPath)
+                ? tempTtsPath
+                : path.join(process.cwd(), tempTtsPath.replace(/^\//, ""));
+              ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
+            }
           }
+        } catch (ttsError) {
+          console.error("[VOICE ROUTE TTS ERROR]", ttsError);
         }
-      } catch (ttsError) {
-        console.error("[VOICE ROUTE TTS ERROR]", ttsError);
       }
 
+      // ✅ CHANGE 3: Output update with shouldTranslate check
       await query(
         `UPDATE message_outputs
          SET translated_text = $1,
              tts_audio_url = $2,
              status = $3
          WHERE id = $4`,
-        [finalText, ttsAudioUrl, ttsAudioUrl ? "ready" : "failed", outputId]
+        [
+          shouldTranslate ? finalText : null,
+          shouldTranslate ? ttsAudioUrl : null,
+          "ready",
+          outputId,
+        ]
       );
 
       await query(

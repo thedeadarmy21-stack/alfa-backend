@@ -107,22 +107,29 @@ function formatRecordingTime(totalSeconds: number) {
 }
 
 // ============================================
-// STEP 1: Components moved OUTSIDE (bahar nikala)
+// Audio Player Component
 // ============================================
 
 type AudioMessagePlayerProps = {
   uri: string;
   isWeb: boolean;
   onAudioError?: (message: string) => void;
+  onPlay?: () => void;
+  onPause?: () => void;
+  onEnd?: () => void;
 };
 
 function AudioMessagePlayer({
   uri,
   isWeb,
   onAudioError,
+  onPlay,
+  onPause,
+  onEnd,
 }: AudioMessagePlayerProps) {
   const [webAudioSrc, setWebAudioSrc] = useState<string>("");
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const soundRef = useRef<any>(null);
 
   useEffect(() => {
     let objectUrl = "";
@@ -162,6 +169,9 @@ function AudioMessagePlayer({
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }
+      if (soundRef.current) {
+        soundRef.current.unloadAsync();
+      }
     };
   }, [uri, isWeb, onAudioError]);
 
@@ -176,12 +186,15 @@ function AudioMessagePlayer({
       );
     }
 
-  return React.createElement("audio", {
-  controls: true,
-  preload: "metadata",
-  src: webAudioSrc,
-  style: { width: "100%", height: 40, borderRadius: 10 },
-});
+    return React.createElement("audio", {
+      controls: true,
+      preload: "metadata",
+      src: webAudioSrc,
+      style: { width: "100%", height: 40, borderRadius: 10 },
+      onPlay: onPlay,
+      onPause: onPause,
+      onEnded: onEnd,
+    });
   }
 
   return (
@@ -189,19 +202,22 @@ function AudioMessagePlayer({
       style={styles.nativeAudioButton}
       onPress={async () => {
         try {
+          if (onPlay) onPlay();
           const { sound } = await Audio.Sound.createAsync(
             { uri },
             { shouldPlay: true }
           );
-
+          soundRef.current = sound;
           sound.setOnPlaybackStatusUpdate((status) => {
             if ("didJustFinish" in status && status.didJustFinish) {
+              if (onEnd) onEnd();
               sound.unloadAsync();
+              soundRef.current = null;
             }
           });
-
           await sound.playAsync();
         } catch (error) {
+          if (onPause) onPause();
           console.log("AUDIO_PLAY_ERROR:", error);
           if (onAudioError) {
             onAudioError("Audio play nahi hui");
@@ -256,6 +272,7 @@ export default function ChatConversationScreen() {
   const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const previousMessageCountRef = useRef(0);
+  const isAudioPlayingRef = useRef(false);
 
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [screenMessage, setScreenMessage] = useState("");
@@ -292,6 +309,14 @@ export default function ChatConversationScreen() {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd?.({ animated });
     }, 180);
+  }
+
+  function onAudioPlay() {
+    isAudioPlayingRef.current = true;
+  }
+
+  function onAudioPauseOrEnd() {
+    isAudioPlayingRef.current = false;
   }
 
   function getFullAudioUrl(path?: string | null) {
@@ -373,17 +398,16 @@ export default function ChatConversationScreen() {
     return response;
   }
 
-function getEffectiveSourceLanguage(): AppLanguage {
-  return selectedSourceLanguage || "en";
-}
-
-function getEffectiveTargetLanguage(): AppLanguage {
-  if (!isTranslateMode) {
-    return getEffectiveSourceLanguage();
+  function getEffectiveSourceLanguage(): AppLanguage {
+    return selectedSourceLanguage || "en";
   }
 
-  return selectedTargetLanguage || selectedSourceLanguage || "en";
-}
+  function getEffectiveTargetLanguage(): AppLanguage {
+    if (!isTranslateMode) {
+      return getEffectiveSourceLanguage();
+    }
+    return selectedTargetLanguage || selectedSourceLanguage || "en";
+  }
 
   function shouldShowOutput(
     item: MessageItem,
@@ -420,7 +444,7 @@ function getEffectiveTargetLanguage(): AppLanguage {
       }
 
       const response = await apiClient.get(
-  `/messages/with-outputs?conversation_id=${getConversationIdAsNumber()}`,
+        `/messages/with-outputs?conversation_id=${getConversationIdAsNumber()}`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -428,26 +452,33 @@ function getEffectiveTargetLanguage(): AppLanguage {
         }
       );
 
-const messages: MessageItem[] = response.data?.messages || [];
-const outputs: MessageOutputItem[] = response.data?.outputs || [];
+      const nextMessages: MessageItem[] = response.data?.messages || [];
+      const nextOutputs: MessageOutputItem[] = response.data?.outputs || [];
 
-setMessageList(messages);
+      // Check if data actually changed
+      const same =
+        JSON.stringify(nextMessages) === JSON.stringify(messageList) &&
+        JSON.stringify(nextOutputs) === JSON.stringify(Object.values(messageOutputMap));
 
-const nextOutputMap: MessageOutputMap = {};
-for (const output of outputs) {
-  nextOutputMap[output.message_id] = output;
-}
-setMessageOutputMap(nextOutputMap);
+      if (!same) {
+        setMessageList(nextMessages);
 
-const hasNewMessages = messages.length > previousMessageCountRef.current;
+        const nextOutputMap: MessageOutputMap = {};
+        for (const output of nextOutputs) {
+          nextOutputMap[output.message_id] = output;
+        }
+        setMessageOutputMap(nextOutputMap);
+      }
 
-if (showLoading) {
-  scrollToBottom(true);
-} else if (hasNewMessages && shouldAutoScrollRef.current) {
-  scrollToBottom(true);
-}
+      const hasNewMessages = nextMessages.length > previousMessageCountRef.current;
 
-previousMessageCountRef.current = messages.length;
+      if (showLoading) {
+        scrollToBottom(true);
+      } else if (hasNewMessages && shouldAutoScrollRef.current) {
+        scrollToBottom(true);
+      }
+
+      previousMessageCountRef.current = nextMessages.length;
     } catch (error: any) {
       const errorMessage =
         error?.response?.data?.error ||
@@ -459,41 +490,41 @@ previousMessageCountRef.current = messages.length;
     }
   }
 
-async function loadDefaults() {
-  const user = await getSavedLoggedInUser();
-  setLoggedInUser(user);
+  async function loadDefaults() {
+    const user = await getSavedLoggedInUser();
+    setLoggedInUser(user);
 
-  if (user?.preferred_language) {
-    setSelectedSourceLanguage(user.preferred_language);
+    if (user?.preferred_language) {
+      setSelectedSourceLanguage(user.preferred_language);
 
-    if (!isTranslateMode) {
-      setSelectedTargetLanguage(user.preferred_language);
-    } else {
-      setSelectedTargetLanguage((prev) =>
-        prev || user.preferred_language || "en"
-      );
+      if (!isTranslateMode) {
+        setSelectedTargetLanguage(user.preferred_language);
+      } else {
+        setSelectedTargetLanguage((prev) =>
+          prev || user.preferred_language || "en"
+        );
+      }
     }
   }
-}
 
   function openLanguagePicker(type: "source" | "target") {
     setActiveLanguagePicker(type);
     setShowLanguageModal(true);
   }
 
-function selectLanguage(value: AppLanguage) {
-  if (activeLanguagePicker === "source") {
-    setSelectedSourceLanguage(value);
+  function selectLanguage(value: AppLanguage) {
+    if (activeLanguagePicker === "source") {
+      setSelectedSourceLanguage(value);
 
-    if (!isTranslateMode) {
-      setSelectedTargetLanguage(value);
+      if (!isTranslateMode) {
+        setSelectedTargetLanguage(value);
+      }
+    } else {
+      setSelectedTargetLanguage(value || selectedSourceLanguage || "en");
     }
-  } else {
-    setSelectedTargetLanguage(value || selectedSourceLanguage || "en");
-  }
 
-  setShowLanguageModal(false);
-}
+    setShowLanguageModal(false);
+  }
 
   async function startRecordingVoice() {
     try {
@@ -549,14 +580,17 @@ function selectLanguage(value: AppLanguage) {
         return;
       }
 
+      const effectiveOriginalLang = getEffectiveSourceLanguage();
+      const effectiveTargetLang = isTranslateMode ? getEffectiveTargetLanguage() : getEffectiveSourceLanguage();
+
       setIsSendingVoice(true);
       setScreenMessage("Sending voice...");
 
       if (Platform.OS === "web") {
         const formData = new FormData();
         formData.append("conversation_id", String(getConversationIdAsNumber()));
-        formData.append("original_lang", getEffectiveSourceLanguage());
-        formData.append("target_lang", getEffectiveTargetLanguage());
+        formData.append("original_lang", effectiveOriginalLang);
+        formData.append("target_lang", effectiveTargetLang);
 
         const response = await fetch(recordedUri);
         const blob = await response.blob();
@@ -582,8 +616,8 @@ function selectLanguage(value: AppLanguage) {
           recordedUri,
           token,
           conversationId: getConversationIdAsNumber(),
-          originalLang: getEffectiveSourceLanguage(),
-          targetLang: getEffectiveTargetLanguage(),
+          originalLang: effectiveOriginalLang,
+          targetLang: effectiveTargetLang,
         });
       }
 
@@ -684,14 +718,16 @@ function selectLanguage(value: AppLanguage) {
         return;
       }
 
-    setIsSendingVoice(true);
-    setScreenMessage("Uploading voice file...");  
-    
+      const effectiveOriginalLang = getEffectiveSourceLanguage();
+      const effectiveTargetLang = isTranslateMode ? getEffectiveTargetLanguage() : getEffectiveSourceLanguage();
+
+      setIsSendingVoice(true);
+      setScreenMessage("Uploading voice file...");
 
       const formData = new FormData();
       formData.append("conversation_id", String(getConversationIdAsNumber()));
-      formData.append("original_lang", getEffectiveSourceLanguage());
-      formData.append("target_lang", getEffectiveTargetLanguage());
+      formData.append("original_lang", effectiveOriginalLang);
+      formData.append("target_lang", effectiveTargetLang);
 
       if (Platform.OS === "web" && (selectedFile as any).file) {
         formData.append(
@@ -732,84 +768,84 @@ function selectLanguage(value: AppLanguage) {
     }
   }
 
-async function handleSendMediaMessage(type: "image" | "video") {
-  try {
-    const token = await getSavedAuthToken();
-    if (!token) {
-      setScreenMessage("Token nahi mila. Dobara login karo.");
-      return;
-    }
-
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      setScreenMessage("Media library permission required");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: type === "image" ? ["images"] : ["videos"],
-      quality: 1,
-      allowsEditing: false,
-    });
-
-    if (result.canceled) return;
-
-    const asset = result.assets?.[0];
-    if (!asset?.uri) {
-      setScreenMessage(`${type} select nahi hui`);
-      return;
-    }
-
-    setIsSendingMedia(true);
-    setScreenMessage(type === "image" ? "Sending image..." : "Sending video...");
-
-    if (Platform.OS === "web") {
-      const formData = new FormData();
-      formData.append("conversation_id", String(getConversationIdAsNumber()));
-      formData.append("type", type);
-
-      const webFile = (asset as any).file;
-
-      if (webFile) {
-        formData.append("media", webFile);
-      } else {
-        const response = await fetch(asset.uri);
-        const blob = await response.blob();
-        const fileName = asset.fileName || `${type}.${type === "image" ? "jpg" : "mp4"}`;
-        const WebFile = globalThis.File;
-        const file = new WebFile([blob], fileName, {
-          type: asset.mimeType || (type === "image" ? "image/jpeg" : "video/mp4"),
-        });
-        formData.append("media", file);
+  async function handleSendMediaMessage(type: "image" | "video") {
+    try {
+      const token = await getSavedAuthToken();
+      if (!token) {
+        setScreenMessage("Token nahi mila. Dobara login karo.");
+        return;
       }
 
-      await apiClient.post("/messages/media", formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        timeout: 45000,
-      });
-    } else {
-      await sendMediaFromMobile({
-        assetUri: asset.uri,
-        token,
-        conversationId: getConversationIdAsNumber(),
-        mediaType: type,
-      });
-    }
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setScreenMessage("Media library permission required");
+        return;
+      }
 
-    setScreenMessage(type === "image" ? "Image send ho gayi" : "Video send ho gaya");
-    await loadMessagesForConversation(false);
-    shouldAutoScrollRef.current = true;
-    scrollToBottom(true);
-  } catch (error: any) {
-    console.log("SEND_MEDIA_ERROR:", error?.response?.data || error?.message || error);
-    const errorMessage = error?.response?.data?.error || error?.message || `${type} send nahi hui`;
-    setScreenMessage(String(errorMessage));
-  } finally {
-    setIsSendingMedia(false);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: type === "image" ? ["images"] : ["videos"],
+        quality: 1,
+        allowsEditing: false,
+      });
+
+      if (result.canceled) return;
+
+      const asset = result.assets?.[0];
+      if (!asset?.uri) {
+        setScreenMessage(`${type} select nahi hui`);
+        return;
+      }
+
+      setIsSendingMedia(true);
+      setScreenMessage(type === "image" ? "Sending image..." : "Sending video...");
+
+      if (Platform.OS === "web") {
+        const formData = new FormData();
+        formData.append("conversation_id", String(getConversationIdAsNumber()));
+        formData.append("type", type);
+
+        const webFile = (asset as any).file;
+
+        if (webFile) {
+          formData.append("media", webFile);
+        } else {
+          const response = await fetch(asset.uri);
+          const blob = await response.blob();
+          const fileName = asset.fileName || `${type}.${type === "image" ? "jpg" : "mp4"}`;
+          const WebFile = globalThis.File;
+          const file = new WebFile([blob], fileName, {
+            type: asset.mimeType || (type === "image" ? "image/jpeg" : "video/mp4"),
+          });
+          formData.append("media", file);
+        }
+
+        await apiClient.post("/messages/media", formData, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          timeout: 45000,
+        });
+      } else {
+        await sendMediaFromMobile({
+          assetUri: asset.uri,
+          token,
+          conversationId: getConversationIdAsNumber(),
+          mediaType: type,
+        });
+      }
+
+      setScreenMessage(type === "image" ? "Image send ho gayi" : "Video send ho gaya");
+      await loadMessagesForConversation(false);
+      shouldAutoScrollRef.current = true;
+      scrollToBottom(true);
+    } catch (error: any) {
+      console.log("SEND_MEDIA_ERROR:", error?.response?.data || error?.message || error);
+      const errorMessage = error?.response?.data?.error || error?.message || `${type} send nahi hui`;
+      setScreenMessage(String(errorMessage));
+    } finally {
+      setIsSendingMedia(false);
+    }
   }
-}
 
   useEffect(() => {
     loadDefaults();
@@ -817,25 +853,25 @@ async function handleSendMediaMessage(type: "image" | "video") {
   }, [conversationId]);
 
   useEffect(() => {
-  if (!conversationId) return;
+    if (!conversationId) return;
 
-  if (autoRefreshRef.current) {
-    clearInterval(autoRefreshRef.current);
-  }
-
-  autoRefreshRef.current = setInterval(() => {
-    if (!isSendingText && !isSendingVoice) {
-      loadMessagesForConversation(false);
-    }
-  }, 3000);
-
-  return () => {
     if (autoRefreshRef.current) {
       clearInterval(autoRefreshRef.current);
-      autoRefreshRef.current = null;
     }
-  };
-}, [conversationId, isSendingText, isSendingVoice]);
+
+    autoRefreshRef.current = setInterval(() => {
+      if (!isSendingText && !isSendingVoice && !isAudioPlayingRef.current) {
+        loadMessagesForConversation(false);
+      }
+    }, 8000);
+
+    return () => {
+      if (autoRefreshRef.current) {
+        clearInterval(autoRefreshRef.current);
+        autoRefreshRef.current = null;
+      }
+    };
+  }, [conversationId, isSendingText, isSendingVoice]);
 
   useEffect(() => {
     if (recorderState.isRecording) {
@@ -867,8 +903,6 @@ async function handleSendMediaMessage(type: "image" | "video") {
     });
   }, [messageList]);
 
-  // STEP 2: Purane functions DELETED - ab components bahar hain
-
   function renderMessageItem({ item }: { item: MessageItem }) {
     const isMine = loggedInUser?.id === item.sender_id;
     const output = messageOutputMap[item.id];
@@ -876,6 +910,7 @@ async function handleSendMediaMessage(type: "image" | "video") {
 
     return (
       <Animated.View
+        key={item.id}
         style={[
           styles.rowWrap,
           isMine ? styles.rowMine : styles.rowOther,
@@ -923,7 +958,6 @@ async function handleSendMediaMessage(type: "image" | "video") {
             <ChatVideoPreview uri={getFullAudioUrl(item.original_audio_url)} />
           ) : null}
 
-          {/* STEP 4: Updated AudioMessagePlayer calls */}
           {item.type === "voice" && item.original_audio_url ? (
             <View style={styles.audioPlayerWrap}>
               <AudioMessagePlayer
@@ -932,19 +966,22 @@ async function handleSendMediaMessage(type: "image" | "video") {
                 onAudioError={(message) => {
                   console.log("AUDIO_MESSAGE_ERROR:", message);
                 }}
+                onPlay={onAudioPlay}
+                onPause={onAudioPauseOrEnd}
+                onEnd={onAudioPauseOrEnd}
               />
             </View>
           ) : null}
 
-<Text style={styles.messageStatusText}>
-  {item.status === "ready"
-    ? "Delivered"
-    : item.status === "processing"
-    ? "Processing..."
-    : item.status === "failed"
-    ? "Failed"
-    : item.status}
-</Text>
+          <Text style={styles.messageStatusText}>
+            {item.status === "ready"
+              ? "Delivered"
+              : item.status === "processing"
+              ? "Processing..."
+              : item.status === "failed"
+              ? "Failed"
+              : item.status}
+          </Text>
 
           {showOutput && output ? (
             <View style={styles.outputBox}>
@@ -964,14 +1001,14 @@ async function handleSendMediaMessage(type: "image" | "video") {
               ) : null}
 
               <Text style={styles.outputStatusText}>
-  {output.status === "failed"
-    ? "Text ready, voice failed"
-    : output.status === "ready"
-    ? "Translated"
-    : output.status === "processing"
-    ? "Translating..."
-    : output.status}
-</Text>
+                {output.status === "failed"
+                  ? "Text ready, voice failed"
+                  : output.status === "ready"
+                  ? "Translated"
+                  : output.status === "processing"
+                  ? "Translating..."
+                  : output.status}
+              </Text>
 
               {item.type === "voice" && output.status === "failed" ? (
                 <Text style={styles.outputWarningText}>
@@ -979,7 +1016,6 @@ async function handleSendMediaMessage(type: "image" | "video") {
                 </Text>
               ) : null}
 
-              {/* STEP 4: Updated AudioMessagePlayer call for translated audio */}
               {output.tts_audio_url ? (
                 <View style={styles.audioPlayerWrap}>
                   <AudioMessagePlayer
@@ -988,6 +1024,9 @@ async function handleSendMediaMessage(type: "image" | "video") {
                     onAudioError={(message) => {
                       console.log("AUDIO_MESSAGE_ERROR:", message);
                     }}
+                    onPlay={onAudioPlay}
+                    onPause={onAudioPauseOrEnd}
+                    onEnd={onAudioPauseOrEnd}
                   />
                 </View>
               ) : null}
@@ -1055,16 +1094,14 @@ async function handleSendMediaMessage(type: "image" | "video") {
                   isMobile ? styles.modeChipMobile : null,
                 ]}
                 onPress={() => {
-  setIsTranslateMode((prev) => {
-    const next = !prev;
-
-    if (!next) {
-      setSelectedTargetLanguage(selectedSourceLanguage || "en");
-    }
-
-    return next;
-  });
-}}
+                  setIsTranslateMode((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setSelectedTargetLanguage(selectedSourceLanguage || "en");
+                    }
+                    return next;
+                  });
+                }}
               >
                 <Text
                   style={[
@@ -1163,11 +1200,11 @@ async function handleSendMediaMessage(type: "image" | "video") {
             ) : null}
 
             <View style={styles.composerRow}>
-             <TouchableOpacity
-             style={styles.iconActionButton}
-             onPress={() => setShowAttachMenu(true)}
-             disabled={isSendingVoice || isSendingMedia || isSendingText}
-            >
+              <TouchableOpacity
+                style={styles.iconActionButton}
+                onPress={() => setShowAttachMenu(true)}
+                disabled={isSendingVoice || isSendingMedia || isSendingText}
+              >
                 <Ionicons name="add" size={20} color="#F7FBFF" />
               </TouchableOpacity>
 
@@ -1182,17 +1219,17 @@ async function handleSendMediaMessage(type: "image" | "video") {
 
               {textMessage.trim() ? (
                 <TouchableOpacity
-  style={styles.sendCircleButton}
-  onPress={handleSendTextMessage}
-  disabled={isSendingText || isSendingVoice || isSendingMedia}
->
+                  style={styles.sendCircleButton}
+                  onPress={handleSendTextMessage}
+                  disabled={isSendingText || isSendingVoice || isSendingMedia}
+                >
                   {isSendingText ? (
-  <Text style={{ color: "#0C2617", fontWeight: "800", fontSize: 11 }}>
-    ...
-  </Text>
-) : (
-  <Ionicons name="send" size={18} color="#0C2617" />
-)}
+                    <Text style={{ color: "#0C2617", fontWeight: "800", fontSize: 11 }}>
+                      SEND
+                    </Text>
+                  ) : (
+                    <Ionicons name="send" size={18} color="#0C2617" />
+                  )}
                 </TouchableOpacity>
               ) : (
                 <Animated.View style={{ transform: [{ scale: micScale }] }}>
@@ -1320,6 +1357,7 @@ async function handleSendMediaMessage(type: "image" | "video") {
     </KeyboardAvoidingView>
   );
 }
+
 
 const styles = StyleSheet.create({
   screen: {
