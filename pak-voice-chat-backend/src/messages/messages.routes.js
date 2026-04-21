@@ -7,6 +7,7 @@ const cloudinary = require("../utils/cloudinary");
 const { translateText } = require("../translate/translate.service");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { transcribeAudio } = require("../stt/stt.service");
 const { generateSpeech } = require("../tts/tts.service");
 
@@ -78,7 +79,7 @@ function getVoiceIdByLanguage(language) {
 }
 
 function ensureTempDir() {
-  const tempDir = path.join(process.cwd(), "tmp");
+  const tempDir = path.join(os.tmpdir(), "alfa-temp");
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
   }
@@ -138,9 +139,12 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const tempDir = ensureTempDir();
       const fileExt = getExtensionFromMimeType(req.file.mimetype);
-      tempInputPath = path.join(tempDir, `voice_${Date.now()}${fileExt}`);
+      tempInputPath = path.join(
+        tempDir,
+        `voice_${Date.now()}_${Math.random().toString(36).slice(2)}${fileExt}`
+      );
 
-      fs.writeFileSync(tempInputPath, req.file.buffer);
+      await fs.promises.writeFile(tempInputPath, req.file.buffer);
 
       const originalUploadResult = await cloudinary.uploader.upload(tempInputPath, {
         resource_type: "auto",
@@ -288,13 +292,13 @@ router.post("/text", requireAuth, async (req, res) => {
       finalText = await translateText(text, target_lang, original_lang);
     }
 
-await query(
-  `UPDATE message_outputs
-   SET translated_text = $1,
-       status = $2
-   WHERE id = $3`,
-  [finalText, finalText ? "ready" : "failed", outputInsert.rows[0].id]
-);
+    await query(
+      `UPDATE message_outputs
+       SET translated_text = $1,
+           status = $2
+       WHERE id = $3`,
+      [finalText, finalText ? "ready" : "failed", outputInsert.rows[0].id]
+    );
 
     await query(
       `UPDATE messages
@@ -414,7 +418,7 @@ router.get("/", requireAuth, async (req, res) => {
   }
 });
 
-/* -------------------- GET requireAuth -------------------- */
+/* -------------------- GET WITH OUTPUTS -------------------- */
 router.get("/with-outputs", requireAuth, async (req, res) => {
   try {
     const parsed = getMessagesSchema.safeParse(req.query);
