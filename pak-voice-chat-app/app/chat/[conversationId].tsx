@@ -269,11 +269,8 @@ export default function ChatConversationScreen() {
   const flatListRef = useRef<FlatList>(null);
   const micScale = useRef(new Animated.Value(1)).current;
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const previousMessageCountRef = useRef(0);
-  const isAudioPlayingRef = useRef(false);
-  const lastDataSignatureRef = useRef("");
 
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [screenMessage, setScreenMessage] = useState("");
@@ -310,14 +307,6 @@ export default function ChatConversationScreen() {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd?.({ animated });
     }, 180);
-  }
-
-  function onAudioPlay() {
-    isAudioPlayingRef.current = true;
-  }
-
-  function onAudioPauseOrEnd() {
-    isAudioPlayingRef.current = false;
   }
 
   function getFullAudioUrl(path?: string | null) {
@@ -453,23 +442,8 @@ export default function ChatConversationScreen() {
         }
       );
 
-      // Check if audio is playing
-      if (isAudioPlayingRef.current) return;
-
       const nextMessages: MessageItem[] = response.data?.messages || [];
       const nextOutputs: MessageOutputItem[] = response.data?.outputs || [];
-
-      // Signature check
-      const nextSignature = JSON.stringify({
-        messages: nextMessages,
-        outputs: nextOutputs,
-      });
-
-      if (nextSignature === lastDataSignatureRef.current) {
-        return;
-      }
-
-      lastDataSignatureRef.current = nextSignature;
 
       setMessageList(nextMessages);
 
@@ -589,8 +563,11 @@ export default function ChatConversationScreen() {
         return;
       }
 
-      const effectiveOriginalLang = getEffectiveSourceLanguage();
-      const effectiveTargetLang = isTranslateMode ? getEffectiveTargetLanguage() : getEffectiveSourceLanguage();
+      // ✅ Change C: Voice send me translate mode ka correct payload
+      const sourceLang = getEffectiveSourceLanguage();
+      const targetLang = getEffectiveTargetLanguage();
+      const effectiveOriginalLang = sourceLang;
+      const effectiveTargetLang = isTranslateMode ? targetLang : sourceLang;
 
       setIsSendingVoice(true);
       setScreenMessage("Sending voice...");
@@ -727,8 +704,11 @@ export default function ChatConversationScreen() {
         return;
       }
 
-      const effectiveOriginalLang = getEffectiveSourceLanguage();
-      const effectiveTargetLang = isTranslateMode ? getEffectiveTargetLanguage() : getEffectiveSourceLanguage();
+      // ✅ Change C: Voice send me translate mode ka correct payload
+      const sourceLang = getEffectiveSourceLanguage();
+      const targetLang = getEffectiveTargetLanguage();
+      const effectiveOriginalLang = sourceLang;
+      const effectiveTargetLang = isTranslateMode ? targetLang : sourceLang;
 
       setIsSendingVoice(true);
       setScreenMessage("Uploading voice file...");
@@ -856,31 +836,11 @@ export default function ChatConversationScreen() {
     }
   }
 
+  // ✅ Change A & B: Auto polling band - sirf ek baar load hoga, manual refresh se kaam hoga
   useEffect(() => {
     loadDefaults();
     loadMessagesForConversation();
   }, [conversationId]);
-
-  useEffect(() => {
-    if (!conversationId) return;
-
-    if (autoRefreshRef.current) {
-      clearInterval(autoRefreshRef.current);
-    }
-
-    autoRefreshRef.current = setInterval(() => {
-      if (!isSendingText && !isSendingVoice && !isAudioPlayingRef.current) {
-        loadMessagesForConversation(false);
-      }
-    }, 8000);
-
-    return () => {
-      if (autoRefreshRef.current) {
-        clearInterval(autoRefreshRef.current);
-        autoRefreshRef.current = null;
-      }
-    };
-  }, [conversationId, isSendingText, isSendingVoice]);
 
   useEffect(() => {
     if (recorderState.isRecording) {
@@ -916,7 +876,10 @@ export default function ChatConversationScreen() {
     const isMine = loggedInUser?.id === item.sender_id;
     const output = messageOutputMap[item.id];
     const showOutput = shouldShowOutput(item, output);
+    
+    // ✅ Change D: Translated text sirf receiver ko dikhao
     const translatedTextForViewer = !isMine && output?.translated_text ? output.translated_text : null;
+    const translatedVoiceForViewer = !isMine && output?.tts_audio_url ? output.tts_audio_url : null;
 
     return (
       <Animated.View
@@ -976,9 +939,6 @@ export default function ChatConversationScreen() {
                 onAudioError={(message) => {
                   console.log("AUDIO_MESSAGE_ERROR:", message);
                 }}
-                onPlay={onAudioPlay}
-                onPause={onAudioPauseOrEnd}
-                onEnd={onAudioPauseOrEnd}
               />
             </View>
           ) : null}
@@ -993,7 +953,8 @@ export default function ChatConversationScreen() {
               : item.status}
           </Text>
 
-          {showOutput && output ? (
+          {/* ✅ Change D: Sirf receiver ko translated output dikhao */}
+          {showOutput && output && !isMine ? (
             <View style={styles.outputBox}>
               <View style={styles.outputHeaderRow}>
                 <Text style={styles.outputTitle}>
@@ -1026,7 +987,7 @@ export default function ChatConversationScreen() {
                 </Text>
               ) : null}
 
-              {output.tts_audio_url ? (
+              {translatedVoiceForViewer ? (
                 <View style={styles.audioPlayerWrap}>
                   <AudioMessagePlayer
                     uri={getFullAudioUrl(output.tts_audio_url)}
@@ -1034,9 +995,6 @@ export default function ChatConversationScreen() {
                     onAudioError={(message) => {
                       console.log("AUDIO_MESSAGE_ERROR:", message);
                     }}
-                    onPlay={onAudioPlay}
-                    onPause={onAudioPauseOrEnd}
-                    onEnd={onAudioPauseOrEnd}
                   />
                 </View>
               ) : null}
@@ -1086,6 +1044,7 @@ export default function ChatConversationScreen() {
                 </View>
               </View>
 
+              {/* ✅ Change B: Manual refresh button - sirf loadMessagesForConversation call karega */}
               <TouchableOpacity onPress={() => loadMessagesForConversation(false)}>
                 <Text style={styles.headerActionText}>Refresh</Text>
               </TouchableOpacity>
@@ -1151,6 +1110,7 @@ export default function ChatConversationScreen() {
           <View style={styles.messageListCard}>
             <View style={styles.messageListTopBar}>
               <Text style={styles.messageListTopBarText}>Messages</Text>
+              {/* ✅ Change B: Manual refresh button */}
               <TouchableOpacity onPress={() => loadMessagesForConversation(false)}>
                 <Text style={styles.messageListTopBarAction}>Refresh</Text>
               </TouchableOpacity>
@@ -1367,7 +1327,6 @@ export default function ChatConversationScreen() {
     </KeyboardAvoidingView>
   );
 }
-
 
 const styles = StyleSheet.create({
   screen: {
