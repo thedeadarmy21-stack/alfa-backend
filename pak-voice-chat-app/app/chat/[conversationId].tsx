@@ -273,6 +273,7 @@ export default function ChatConversationScreen() {
   const shouldAutoScrollRef = useRef(true);
   const previousMessageCountRef = useRef(0);
   const isAudioPlayingRef = useRef(false);
+  const lastDataSignatureRef = useRef("");
 
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [screenMessage, setScreenMessage] = useState("");
@@ -452,23 +453,31 @@ export default function ChatConversationScreen() {
         }
       );
 
+      // Check if audio is playing
+      if (isAudioPlayingRef.current) return;
+
       const nextMessages: MessageItem[] = response.data?.messages || [];
       const nextOutputs: MessageOutputItem[] = response.data?.outputs || [];
 
-      // Check if data actually changed
-      const same =
-        JSON.stringify(nextMessages) === JSON.stringify(messageList) &&
-        JSON.stringify(nextOutputs) === JSON.stringify(Object.values(messageOutputMap));
+      // Signature check
+      const nextSignature = JSON.stringify({
+        messages: nextMessages,
+        outputs: nextOutputs,
+      });
 
-      if (!same) {
-        setMessageList(nextMessages);
-
-        const nextOutputMap: MessageOutputMap = {};
-        for (const output of nextOutputs) {
-          nextOutputMap[output.message_id] = output;
-        }
-        setMessageOutputMap(nextOutputMap);
+      if (nextSignature === lastDataSignatureRef.current) {
+        return;
       }
+
+      lastDataSignatureRef.current = nextSignature;
+
+      setMessageList(nextMessages);
+
+      const nextOutputMap: MessageOutputMap = {};
+      for (const output of nextOutputs) {
+        nextOutputMap[output.message_id] = output;
+      }
+      setMessageOutputMap(nextOutputMap);
 
       const hasNewMessages = nextMessages.length > previousMessageCountRef.current;
 
@@ -907,6 +916,7 @@ export default function ChatConversationScreen() {
     const isMine = loggedInUser?.id === item.sender_id;
     const output = messageOutputMap[item.id];
     const showOutput = shouldShowOutput(item, output);
+    const translatedTextForViewer = !isMine && output?.translated_text ? output.translated_text : null;
 
     return (
       <Animated.View
@@ -996,8 +1006,8 @@ export default function ChatConversationScreen() {
                 </Text>
               </View>
 
-              {output.translated_text ? (
-                <Text style={styles.outputText}>{output.translated_text}</Text>
+              {translatedTextForViewer ? (
+                <Text style={styles.outputText}>{translatedTextForViewer}</Text>
               ) : null}
 
               <Text style={styles.outputStatusText}>
