@@ -399,17 +399,22 @@ export default function ChatConversationScreen() {
     return selectedTargetLanguage || selectedSourceLanguage || "en";
   }
 
+  // ✅ CHANGE 1: shouldShowOutput() replace karo
   function shouldShowOutput(
     item: MessageItem,
     output?: MessageOutputItem | null
   ) {
     if (!output) return false;
-    if (!isTranslateMode && output.target_lang === item.original_lang) {
-      return false;
-    }
-    if (output.target_lang === item.original_lang && item.type === "text") {
-      return false;
-    }
+
+    // Mode OFF = translated output bilkul show nahi hogi
+    if (!isTranslateMode) return false;
+
+    // Agar actual translation nahi hui to output mat dikhao
+    if (output.target_lang === item.original_lang) return false;
+
+    // Agar translated text bhi nahi aur translated voice bhi nahi to mat dikhao
+    if (!output.translated_text && !output.tts_audio_url) return false;
+
     return true;
   }
 
@@ -445,12 +450,26 @@ export default function ChatConversationScreen() {
       const nextMessages: MessageItem[] = response.data?.messages || [];
       const nextOutputs: MessageOutputItem[] = response.data?.outputs || [];
 
-      setMessageList(nextMessages);
+      // ✅ CHANGE 6: unnecessary full replace reduce karo - signature check
+      const currentMessageSignature = JSON.stringify(messageList);
+      const nextMessageSignature = JSON.stringify(nextMessages);
 
+      const currentOutputSignature = JSON.stringify(messageOutputMap);
       const nextOutputMap: MessageOutputMap = {};
       for (const output of nextOutputs) {
         nextOutputMap[output.message_id] = output;
       }
+      const nextOutputSignature = JSON.stringify(nextOutputMap);
+
+      if (
+        currentMessageSignature === nextMessageSignature &&
+        currentOutputSignature === nextOutputSignature
+      ) {
+        if (showLoading) setIsLoadingMessages(false);
+        return;
+      }
+
+      setMessageList(nextMessages);
       setMessageOutputMap(nextOutputMap);
 
       const hasNewMessages = nextMessages.length > previousMessageCountRef.current;
@@ -563,7 +582,6 @@ export default function ChatConversationScreen() {
         return;
       }
 
-      // ✅ Change C: Voice send me translate mode ka correct payload
       const sourceLang = getEffectiveSourceLanguage();
       const targetLang = getEffectiveTargetLanguage();
       const effectiveOriginalLang = sourceLang;
@@ -609,8 +627,8 @@ export default function ChatConversationScreen() {
 
       setScreenMessage("Recorded voice send ho gayi");
       await loadMessagesForConversation(false);
-      shouldAutoScrollRef.current = true;
-      scrollToBottom(true);
+      // ✅ CHANGE 4: send ke baad scrollToBottom soften karo
+      setTimeout(() => scrollToBottom(true), 120);
     } catch (error: any) {
       console.log(
         "STOP_RECORDING_SEND_ERROR:",
@@ -669,8 +687,8 @@ export default function ChatConversationScreen() {
       setTextMessage("");
       setScreenMessage("Message send ho gaya");
       await loadMessagesForConversation(false);
-      shouldAutoScrollRef.current = true;
-      scrollToBottom(true);
+      // ✅ CHANGE 4: send ke baad scrollToBottom soften karo
+      setTimeout(() => scrollToBottom(true), 120);
     } catch (error: any) {
       const errorMessage =
         error?.response?.data?.error ||
@@ -704,7 +722,6 @@ export default function ChatConversationScreen() {
         return;
       }
 
-      // ✅ Change C: Voice send me translate mode ka correct payload
       const sourceLang = getEffectiveSourceLanguage();
       const targetLang = getEffectiveTargetLanguage();
       const effectiveOriginalLang = sourceLang;
@@ -744,8 +761,8 @@ export default function ChatConversationScreen() {
 
       setScreenMessage("Voice send ho gayi");
       await loadMessagesForConversation(false);
-      shouldAutoScrollRef.current = true;
-      scrollToBottom(true);
+      // ✅ CHANGE 4: send ke baad scrollToBottom soften karo
+      setTimeout(() => scrollToBottom(true), 120);
     } catch (error: any) {
       const errorMessage =
         error?.response?.data?.error ||
@@ -825,8 +842,8 @@ export default function ChatConversationScreen() {
 
       setScreenMessage(type === "image" ? "Image send ho gayi" : "Video send ho gaya");
       await loadMessagesForConversation(false);
-      shouldAutoScrollRef.current = true;
-      scrollToBottom(true);
+      // ✅ CHANGE 4: send ke baad scrollToBottom soften karo
+      setTimeout(() => scrollToBottom(true), 120);
     } catch (error: any) {
       console.log("SEND_MEDIA_ERROR:", error?.response?.data || error?.message || error);
       const errorMessage = error?.response?.data?.error || error?.message || `${type} send nahi hui`;
@@ -836,7 +853,7 @@ export default function ChatConversationScreen() {
     }
   }
 
-  // ✅ Change A & B: Auto polling band - sirf ek baar load hoga, manual refresh se kaam hoga
+  // Auto polling band - sirf ek baar load hoga
   useEffect(() => {
     loadDefaults();
     loadMessagesForConversation();
@@ -873,17 +890,20 @@ export default function ChatConversationScreen() {
   }, [messageList]);
 
   function renderMessageItem({ item }: { item: MessageItem }) {
+    // ✅ CHANGE 2: renderMessageItem() me translated block strict karo
     const isMine = loggedInUser?.id === item.sender_id;
     const output = messageOutputMap[item.id];
-    const showOutput = shouldShowOutput(item, output);
-    
-    // ✅ Change D: Translated text sirf receiver ko dikhao
-    const translatedTextForViewer = !isMine && output?.translated_text ? output.translated_text : null;
-    const translatedVoiceForViewer = !isMine && output?.tts_audio_url ? output.tts_audio_url : null;
+    const showOutput = !isMine && shouldShowOutput(item, output);
+
+    const translatedTextForViewer =
+      showOutput && output?.translated_text ? output.translated_text : null;
+
+    const translatedVoiceForViewer =
+      showOutput && output?.tts_audio_url ? output.tts_audio_url : null;
 
     return (
+      // ✅ CHANGE 3: Animated.View se key={item.id} hatao
       <Animated.View
-        key={item.id}
         style={[
           styles.rowWrap,
           isMine ? styles.rowMine : styles.rowOther,
@@ -953,8 +973,8 @@ export default function ChatConversationScreen() {
               : item.status}
           </Text>
 
-          {/* ✅ Change D: Sirf receiver ko translated output dikhao */}
-          {showOutput && output && !isMine ? (
+          {/* Translated output block - sirf receiver ko aur mode on me */}
+          {showOutput && output ? (
             <View style={styles.outputBox}>
               <View style={styles.outputHeaderRow}>
                 <Text style={styles.outputTitle}>
@@ -1044,8 +1064,13 @@ export default function ChatConversationScreen() {
                 </View>
               </View>
 
-              {/* ✅ Change B: Manual refresh button - sirf loadMessagesForConversation call karega */}
-              <TouchableOpacity onPress={() => loadMessagesForConversation(false)}>
+              {/* ✅ CHANGE 5: manual refresh ko "soft refresh" banao */}
+              <TouchableOpacity
+                onPress={async () => {
+                  shouldAutoScrollRef.current = false;
+                  await loadMessagesForConversation(false);
+                }}
+              >
                 <Text style={styles.headerActionText}>Refresh</Text>
               </TouchableOpacity>
             </View>
@@ -1110,8 +1135,13 @@ export default function ChatConversationScreen() {
           <View style={styles.messageListCard}>
             <View style={styles.messageListTopBar}>
               <Text style={styles.messageListTopBarText}>Messages</Text>
-              {/* ✅ Change B: Manual refresh button */}
-              <TouchableOpacity onPress={() => loadMessagesForConversation(false)}>
+              {/* ✅ CHANGE 5: manual refresh ko "soft refresh" banao */}
+              <TouchableOpacity
+                onPress={async () => {
+                  shouldAutoScrollRef.current = false;
+                  await loadMessagesForConversation(false);
+                }}
+              >
                 <Text style={styles.messageListTopBarAction}>Refresh</Text>
               </TouchableOpacity>
             </View>
@@ -1327,6 +1357,7 @@ export default function ChatConversationScreen() {
     </KeyboardAvoidingView>
   );
 }
+
 
 const styles = StyleSheet.create({
   screen: {

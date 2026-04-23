@@ -176,7 +176,6 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const sourceText = await transcribeAudio(tempInputPath, original_lang);
 
-      // ✅ CHANGE 1: Translation condition improve
       const shouldTranslate = target_lang && target_lang !== original_lang;
 
       let finalText = sourceText;
@@ -184,7 +183,6 @@ router.post("/voice", requireAuth, (req, res) => {
         finalText = await translateText(sourceText, target_lang, original_lang);
       }
 
-      // ✅ CHANGE 2: TTS conditional on shouldTranslate
       let ttsAudioUrl = null;
 
       if (shouldTranslate) {
@@ -206,7 +204,11 @@ router.post("/voice", requireAuth, (req, res) => {
         }
       }
 
-      // ✅ CHANGE 3: Output update with shouldTranslate check
+      // ✅ CHANGE 1: Voice route me output status smarter karo
+      const outputStatus = shouldTranslate
+        ? (ttsAudioUrl ? "ready" : "failed")
+        : "ready";
+
       await query(
         `UPDATE message_outputs
          SET translated_text = $1,
@@ -216,7 +218,7 @@ router.post("/voice", requireAuth, (req, res) => {
         [
           shouldTranslate ? finalText : null,
           shouldTranslate ? ttsAudioUrl : null,
-          "ready",
+          outputStatus,
           outputId,
         ]
       );
@@ -297,17 +299,28 @@ router.post("/text", requireAuth, async (req, res) => {
       [message.id, receiverId, target_lang]
     );
 
+    // ✅ CHANGE 2: Text route me shouldTranslate lagao
+    const shouldTranslate =
+      !!target_lang &&
+      !!original_lang &&
+      target_lang !== original_lang;
+
     let finalText = text;
-    if (target_lang !== original_lang) {
+    if (shouldTranslate) {
       finalText = await translateText(text, target_lang, original_lang);
     }
 
+    // ✅ CHANGE 3: Text route ka UPDATE message_outputs block replace karo
     await query(
       `UPDATE message_outputs
        SET translated_text = $1,
            status = $2
        WHERE id = $3`,
-      [finalText, finalText ? "ready" : "failed", outputInsert.rows[0].id]
+      [
+        shouldTranslate ? finalText : null,
+        "ready",
+        outputInsert.rows[0].id,
+      ]
     );
 
     await query(
@@ -317,12 +330,13 @@ router.post("/text", requireAuth, async (req, res) => {
       [message.id]
     );
 
+    // ✅ CHANGE 4: Text route ke response me bhi translated text sirf mode on me bhejo
     return res.json({
       ok: true,
       message: {
         ...message,
         status: "ready",
-        translated_text: finalText,
+        translated_text: shouldTranslate ? finalText : null,
       },
     });
   } catch (e) {
