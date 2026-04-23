@@ -194,9 +194,10 @@ router.post("/voice", requireAuth, (req, res) => {
               ttsAudioUrl = tempTtsPath;
             } else {
               const absoluteTtsPath = path.isAbsolute(tempTtsPath)
-                ? tempTtsPath
-                : path.join(process.cwd(), tempTtsPath.replace(/^\//, ""));
-              ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
+  ? tempTtsPath
+  : path.resolve(tempTtsPath);
+
+ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
             }
           }
         } catch (ttsError) {
@@ -251,8 +252,8 @@ router.post("/voice", requireAuth, (req, res) => {
 
       if (tempTtsPath && typeof tempTtsPath === "string" && !tempTtsPath.startsWith("http")) {
         const absoluteTtsPath = path.isAbsolute(tempTtsPath)
-          ? tempTtsPath
-          : path.join(process.cwd(), tempTtsPath.replace(/^\//, ""));
+  ? tempTtsPath
+  : path.resolve(tempTtsPath);
         if (fs.existsSync(absoluteTtsPath)) {
           try {
             fs.unlinkSync(absoluteTtsPath);

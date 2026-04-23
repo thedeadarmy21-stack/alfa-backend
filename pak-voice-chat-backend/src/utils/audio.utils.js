@@ -74,8 +74,12 @@ async function normalizeAudioToMp3(inputPath) {
     throw new Error("Final normalized audio file not found");
   }
 
-  // Clean up input file if it's different from final (and not needed)
-  if (inputPath !== finalOutputPath && fs.existsSync(inputPath)) {
+  // ✅ CHANGE: safe cleanup - better version with _clean.wav check
+  if (
+    inputPath !== finalOutputPath &&
+    fs.existsSync(inputPath) &&
+    !inputPath.endsWith("_clean.wav")
+  ) {
     try {
       fs.unlinkSync(inputPath);
     } catch (err) {

@@ -34,13 +34,16 @@ function normalizeAudio(inputPath) {
   });
 }
 
+// ✅ CHANGE: safer version with cleanup in finally block
 async function transcribeAudio(filePath, langHint) {
+  let cleanedPath = filePath;
+
   try {
     if (!filePath || !fs.existsSync(filePath)) {
       throw new Error(`Audio file not found: ${filePath}`);
     }
 
-    const cleanedPath = await normalizeAudio(filePath);
+    cleanedPath = await normalizeAudio(filePath);
     const language = mapLanguage(langHint);
 
     const transcription = await groq.audio.transcriptions.create({
@@ -60,6 +63,19 @@ async function transcribeAudio(filePath, langHint) {
   } catch (error) {
     console.error("Groq STT Error:", error.response?.data || error.message);
     throw error;
+  } finally {
+    // ✅ CHANGE: cleanup temporary _clean.wav file
+    if (
+      cleanedPath &&
+      cleanedPath !== filePath &&
+      fs.existsSync(cleanedPath)
+    ) {
+      try {
+        fs.unlinkSync(cleanedPath);
+      } catch (err) {
+        console.warn("[STT] cleanup failed:", err.message);
+      }
+    }
   }
 }
 

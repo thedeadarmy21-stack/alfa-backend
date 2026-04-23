@@ -1,6 +1,7 @@
 const { ElevenLabsClient } = require("elevenlabs");
 const fs = require("fs");
 const path = require("path");
+const os = require("os"); // ✅ CHANGE: os import add karo
 const { normalizeAudioToMp3 } = require("../utils/audio.utils");
 
 const client = new ElevenLabsClient({
@@ -81,13 +82,14 @@ async function generateSpeech(text, lang) {
     const modelId =
       process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
 
-    const uploadsDir = path.join(process.cwd(), "uploads");
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+    // ✅ CHANGE: uploads folder ki jagah os.tmpdir() use karo
+    const tempDir = path.join(os.tmpdir(), "alfa-tts");
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    const filename = `tts_${Date.now()}.mp3`;
-    const outputPath = path.join(uploadsDir, filename);
+    const filename = `tts_${Date.now()}_${Math.random().toString(36).slice(2)}.mp3`;
+    const outputPath = path.join(tempDir, filename);
 
     console.log("[TTS] Generating speech with:", {
       lang,
@@ -118,9 +120,9 @@ async function generateSpeech(text, lang) {
     fs.writeFileSync(outputPath, finalBuffer);
 
     const fixedPath = await normalizeAudioToMp3(outputPath);
-    const fixedFilename = path.basename(fixedPath);
 
-    return `/uploads/${fixedFilename}`;
+    // ✅ CHANGE: return `/uploads/${fixedFilename}` ki jagah return fixedPath
+    return fixedPath;
   } catch (error) {
     console.error("ElevenLabs Error full:", error);
     console.error("ElevenLabs Error message:", error?.message || error);
