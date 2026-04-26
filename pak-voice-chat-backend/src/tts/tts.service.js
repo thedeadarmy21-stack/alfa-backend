@@ -65,6 +65,7 @@ async function streamToBuffer(audioStream) {
 }
 
 async function generateSpeech(text, lang) {
+  console.log("[TTS VERSION] NO FFMPEG TTS SERVICE ACTIVE");
   try {
     const cleanText = normalizeTextForTTS(text);
 
