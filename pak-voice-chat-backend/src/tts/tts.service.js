@@ -1,8 +1,7 @@
 const { ElevenLabsClient } = require("elevenlabs");
 const fs = require("fs");
 const path = require("path");
-const os = require("os"); // ✅ CHANGE: os import add karo
-const { normalizeAudioToMp3 } = require("../utils/audio.utils");
+const os = require("os");
 
 const client = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
@@ -82,7 +81,6 @@ async function generateSpeech(text, lang) {
     const modelId =
       process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
 
-    // ✅ CHANGE: uploads folder ki jagah os.tmpdir() use karo
     const tempDir = path.join(os.tmpdir(), "alfa-tts");
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
@@ -117,12 +115,11 @@ async function generateSpeech(text, lang) {
       throw new Error("Empty audio buffer returned from ElevenLabs");
     }
 
+    // ✅ CHANGE: Sirf file save karo, normalize mat karo
     fs.writeFileSync(outputPath, finalBuffer);
 
-    const fixedPath = await normalizeAudioToMp3(outputPath);
-
-    // ✅ CHANGE: return `/uploads/${fixedFilename}` ki jagah return fixedPath
-    return fixedPath;
+    // ✅ CHANGE: Direct outputPath return karo
+    return outputPath;
   } catch (error) {
     console.error("ElevenLabs Error full:", error);
     console.error("ElevenLabs Error message:", error?.message || error);
