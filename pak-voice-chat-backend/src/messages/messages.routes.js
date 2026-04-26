@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { transcribeAudio } = require("../stt/stt.service");
-const { generateSpeech } = require("../tts/tts.service");
+const { generateSpeechBuffer } = require("../tts/tts.service");
 
 const router = express.Router();
 
@@ -104,11 +104,29 @@ async function uploadLocalFileToCloudinary(filePath, resourceType = "auto") {
   return result.secure_url;
 }
 
+// ✅ CHANGE: uploadBufferToCloudinary helper add karo
+function uploadBufferToCloudinary(buffer, folder = "alfa-tts") {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "video",
+        folder,
+        format: "mp3",
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result.secure_url);
+      }
+    );
+
+    stream.end(buffer);
+  });
+}
+
 /* -------------------- VOICE -------------------- */
 router.post("/voice", requireAuth, (req, res) => {
   upload.single("audio")(req, res, async (err) => {
     let tempInputPath = null;
-    let tempTtsPath = null;
 
     try {
       if (err) {
@@ -183,29 +201,24 @@ router.post("/voice", requireAuth, (req, res) => {
         finalText = await translateText(sourceText, target_lang, original_lang);
       }
 
+      // ✅ CHANGE: Voice route ka TTS block replace karo with buffer approach
       let ttsAudioUrl = null;
 
       if (shouldTranslate) {
         try {
-          tempTtsPath = await generateSpeech(finalText, target_lang || original_lang || "en");
-
-          if (tempTtsPath) {
-            if (tempTtsPath.startsWith("http://") || tempTtsPath.startsWith("https://")) {
-              ttsAudioUrl = tempTtsPath;
-            } else {
-              const absoluteTtsPath = path.isAbsolute(tempTtsPath)
-  ? tempTtsPath
-  : path.resolve(tempTtsPath);
-
-ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
-            }
-          }
+          const ttsBuffer = await generateSpeechBuffer(finalText, target_lang);
+          ttsAudioUrl = await uploadBufferToCloudinary(ttsBuffer, "alfa-translated-voice");
         } catch (ttsError) {
-          console.error("[VOICE ROUTE TTS ERROR]", ttsError);
+          console.error("[VOICE ROUTE TTS ERROR]", {
+            message: ttsError?.message,
+            statusCode: ttsError?.statusCode,
+            body: ttsError?.body,
+            stack: ttsError?.stack,
+          });
         }
       }
 
-      // ✅ CHANGE 1: Voice route me output status smarter karo
+      // ✅ CHANGE: Voice route me output status smarter karo
       const outputStatus = shouldTranslate
         ? (ttsAudioUrl ? "ready" : "failed")
         : "ready";
@@ -250,16 +263,7 @@ ttsAudioUrl = await uploadLocalFileToCloudinary(absoluteTtsPath, "video");
         } catch {}
       }
 
-      if (tempTtsPath && typeof tempTtsPath === "string" && !tempTtsPath.startsWith("http")) {
-        const absoluteTtsPath = path.isAbsolute(tempTtsPath)
-  ? tempTtsPath
-  : path.resolve(tempTtsPath);
-        if (fs.existsSync(absoluteTtsPath)) {
-          try {
-            fs.unlinkSync(absoluteTtsPath);
-          } catch {}
-        }
-      }
+      // ✅ CHANGE: tempTtsPath cleanup hata diya (buffer approach me file nahi banti)
     }
   });
 });
@@ -300,7 +304,6 @@ router.post("/text", requireAuth, async (req, res) => {
       [message.id, receiverId, target_lang]
     );
 
-    // ✅ CHANGE 2: Text route me shouldTranslate lagao
     const shouldTranslate =
       !!target_lang &&
       !!original_lang &&
@@ -311,7 +314,6 @@ router.post("/text", requireAuth, async (req, res) => {
       finalText = await translateText(text, target_lang, original_lang);
     }
 
-    // ✅ CHANGE 3: Text route ka UPDATE message_outputs block replace karo
     await query(
       `UPDATE message_outputs
        SET translated_text = $1,
@@ -331,7 +333,6 @@ router.post("/text", requireAuth, async (req, res) => {
       [message.id]
     );
 
-    // ✅ CHANGE 4: Text route ke response me bhi translated text sirf mode on me bhejo
     return res.json({
       ok: true,
       message: {
