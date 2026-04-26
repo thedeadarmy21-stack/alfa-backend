@@ -1,10 +1,12 @@
 const { execFile } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path; // ✅ CHANGE: ffmpeg-path import add karo
 
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
-    execFile("ffmpeg", args, (error, stdout, stderr) => {
+    // ✅ CHANGE: "ffmpeg" ki jagah ffmpegPath use karo
+    execFile(ffmpegPath, args, (error, stdout, stderr) => {
       if (error) {
         console.error("[FFMPEG ERROR]", stderr || error.message);
         return reject(error);
@@ -74,7 +76,7 @@ async function normalizeAudioToMp3(inputPath) {
     throw new Error("Final normalized audio file not found");
   }
 
-  // ✅ CHANGE: safe cleanup - better version with _clean.wav check
+  // Clean up input file if it's different from final (and not needed)
   if (
     inputPath !== finalOutputPath &&
     fs.existsSync(inputPath) &&

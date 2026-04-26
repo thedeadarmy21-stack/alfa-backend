@@ -2,17 +2,22 @@ const fs = require("fs");
 const path = require("path");
 const { exec } = require("child_process");
 const Groq = require("groq-sdk");
+const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path; // ✅ CHANGE: ffmpeg-path import add karo
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+// ✅ CHANGE: mapLanguage updated with proper language codes
 function mapLanguage(langHint) {
   const map = {
     en: "en",
     ur: "ur",
-    hi: "hi",
-    sd: "ur",
-    ps: "ur",
-    bal: "ur"
+    sd: "sd",
+    ps: "ps",
+    bal: "ur",
+    hinglish: "hi",
+    de: "de",
+    es: "es",
+    zh: "zh",
   };
   return map[langHint] || undefined;
 }
@@ -22,7 +27,8 @@ function normalizeAudio(inputPath) {
     const ext = path.extname(inputPath);
     const outputPath = inputPath.replace(ext, "_clean.wav");
 
-    const command = `ffmpeg -y -i "${inputPath}" -ac 1 -ar 16000 -af "highpass=f=120,lowpass=f=7600,volume=1.8" "${outputPath}"`;
+    // ✅ CHANGE: ffmpeg ki jagah ffmpegPath use karo
+    const command = `"${ffmpegPath}" -y -i "${inputPath}" -ac 1 -ar 16000 -af "highpass=f=120,lowpass=f=7600,volume=1.8" "${outputPath}"`;
 
     exec(command, (error) => {
       if (error) {
@@ -34,7 +40,6 @@ function normalizeAudio(inputPath) {
   });
 }
 
-// ✅ CHANGE: safer version with cleanup in finally block
 async function transcribeAudio(filePath, langHint) {
   let cleanedPath = filePath;
 
@@ -64,7 +69,6 @@ async function transcribeAudio(filePath, langHint) {
     console.error("Groq STT Error:", error.response?.data || error.message);
     throw error;
   } finally {
-    // ✅ CHANGE: cleanup temporary _clean.wav file
     if (
       cleanedPath &&
       cleanedPath !== filePath &&
