@@ -1,16 +1,8 @@
 const axios = require("axios");
-
-function normalizeTextForTTS(text) {
-  return String(text || "")
-    .replace(/\s+/g, " ")
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .replace(/\n+/g, " ")
-    .trim();
-}
+const cloudinary = require("../utils/cloudinary");
 
 function getVoiceIdByLanguage(lang) {
-  const voiceMap = {
+  const map = {
     en: process.env.ELEVENLABS_VOICE_EN,
     ur: process.env.ELEVENLABS_VOICE_UR || process.env.ELEVENLABS_VOICE_EN,
     sd: process.env.ELEVENLABS_VOICE_SD || process.env.ELEVENLABS_VOICE_UR || process.env.ELEVENLABS_VOICE_EN,
@@ -21,28 +13,41 @@ function getVoiceIdByLanguage(lang) {
     es: process.env.ELEVENLABS_VOICE_ES || process.env.ELEVENLABS_VOICE_EN,
     zh: process.env.ELEVENLABS_VOICE_ZH || process.env.ELEVENLABS_VOICE_EN,
   };
-
-  return voiceMap[lang] || process.env.ELEVENLABS_VOICE_EN;
+  return map[lang] || process.env.ELEVENLABS_VOICE_EN;
 }
 
-async function generateSpeechBuffer(text, lang) {
-  console.log("[TTS VERSION] DIRECT ELEVENLABS API - NO SDK - NO FFMPEG");
+function uploadAudioBuffer(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: "video",
+        folder: "alfa-translated-voice",
+        format: "mp3",
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result.secure_url);
+      }
+    );
 
-  const cleanText = normalizeTextForTTS(text);
-  if (!cleanText) throw new Error("Empty text passed to TTS");
+    stream.end(buffer);
+  });
+}
+
+async function generateTranslatedVoiceUrl(text, lang) {
+  console.log("[TTS DIRECT] No ffmpeg, no local file");
+
+  const cleanText = String(text || "").trim();
+  if (!cleanText) throw new Error("Empty TTS text");
 
   const voiceId = getVoiceIdByLanguage(lang);
   if (!voiceId) throw new Error(`No voice configured for ${lang}`);
 
-  const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
-
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
-
   const response = await axios.post(
-    url,
+    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
     {
       text: cleanText,
-      model_id: modelId,
+      model_id: process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2",
       voice_settings: {
         stability: 0.72,
         similarity_boost: 0.85,
@@ -60,10 +65,7 @@ async function generateSpeechBuffer(text, lang) {
     }
   );
 
-  return Buffer.from(response.data);
+  return uploadAudioBuffer(Buffer.from(response.data));
 }
 
-module.exports = {
-  generateSpeechBuffer,
-  getVoiceIdByLanguage,
-};
+module.exports = { generateTranslatedVoiceUrl };

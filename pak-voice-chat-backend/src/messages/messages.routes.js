@@ -9,7 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { transcribeAudio } = require("../stt/stt.service");
-const { generateSpeechBuffer } = require("../tts/tts.service");
+const { generateTranslatedVoiceUrl } = require("../tts/tts.direct.service");
 
 const router = express.Router();
 
@@ -204,8 +204,7 @@ router.post("/voice", requireAuth, (req, res) => {
 
       if (shouldTranslate) {
         try {
-          const ttsBuffer = await generateSpeechBuffer(finalText, target_lang);
-          ttsAudioUrl = await uploadBufferToCloudinary(ttsBuffer, "alfa-translated-voice");
+          ttsAudioUrl = await generateTranslatedVoiceUrl(finalText, target_lang);
         } catch (ttsError) {
           console.error("[VOICE ROUTE TTS ERROR]", {
             message: ttsError?.message,
