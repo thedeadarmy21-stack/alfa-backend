@@ -172,16 +172,6 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const message = insertRes.rows[0];
 
-      const outputInsert = await query(
-        `INSERT INTO message_outputs
-         (message_id, receiver_id, target_lang, status)
-         VALUES ($1,$2,$3,'processing')
-         RETURNING id`,
-        [message.id, receiverId, target_lang]
-      );
-
-      const outputId = outputInsert.rows[0].id;
-
       const sourceText = await transcribeAudio(tempInputPath, original_lang);
 
       const shouldTranslate =
@@ -189,6 +179,21 @@ router.post("/voice", requireAuth, (req, res) => {
         target_lang &&
         original_lang &&
         target_lang !== original_lang;
+
+      // ✅ B) shouldTranslate ke baad outputId conditional create karo
+      let outputId = null;
+
+      if (shouldTranslate) {
+        const outputInsert = await query(
+          `INSERT INTO message_outputs
+           (message_id, receiver_id, target_lang, status)
+           VALUES ($1,$2,$3,'processing')
+           RETURNING id`,
+          [message.id, receiverId, target_lang]
+        );
+
+        outputId = outputInsert.rows[0].id;
+      }
 
       let finalText = sourceText;
       if (shouldTranslate) {
@@ -211,23 +216,22 @@ router.post("/voice", requireAuth, (req, res) => {
         }
       }
 
-      const outputStatus = shouldTranslate
-        ? (ttsAudioUrl ? "ready" : "failed")
-        : "ready";
-
-      await query(
-        `UPDATE message_outputs
-         SET translated_text = $1,
-             tts_audio_url = $2,
-             status = $3
-         WHERE id = $4`,
-        [
-          shouldTranslate ? finalText : null,
-          shouldTranslate ? ttsAudioUrl : null,
-          outputStatus,
-          outputId,
-        ]
-      );
+      // ✅ C) Output update query ko condition me rakho
+      if (shouldTranslate && outputId) {
+        await query(
+          `UPDATE message_outputs
+           SET translated_text = $1,
+               tts_audio_url = $2,
+               status = $3
+           WHERE id = $4`,
+          [
+            finalText,
+            ttsAudioUrl,
+            ttsAudioUrl ? "ready" : "failed",
+            outputId,
+          ]
+        );
+      }
 
       await query(
         `UPDATE messages

@@ -321,14 +321,16 @@ export default function ChatConversationScreen() {
     conversationId: number;
     originalLang: string;
     targetLang: string;
+    translateMode: boolean;
   }) {
-    const { recordedUri, token, conversationId, originalLang, targetLang } =
+    const { recordedUri, token, conversationId, originalLang, targetLang, translateMode } =
       params;
 
     const formData = new FormData();
     formData.append("conversation_id", String(conversationId));
     formData.append("original_lang", originalLang);
     formData.append("target_lang", targetLang);
+    formData.append("translate_mode", translateMode ? "true" : "false");
 
     const audioFile = new File(recordedUri);
     formData.append("audio", audioFile);
@@ -405,13 +407,10 @@ export default function ChatConversationScreen() {
   ) {
     if (!output) return false;
 
-    // Mode OFF = translated output bilkul show nahi hogi
     if (!isTranslateMode) return false;
 
-    // Agar actual translation nahi hui to output mat dikhao
     if (output.target_lang === item.original_lang) return false;
 
-    // Agar translated text bhi nahi aur translated voice bhi nahi to mat dikhao
     if (!output.translated_text && !output.tts_audio_url) return false;
 
     return true;
@@ -621,6 +620,7 @@ export default function ChatConversationScreen() {
           conversationId: getConversationIdAsNumber(),
           originalLang: effectiveOriginalLang,
           targetLang: effectiveTargetLang,
+          translateMode: isTranslateMode,
         });
       }
 
@@ -850,7 +850,6 @@ export default function ChatConversationScreen() {
     }
   }
 
-  // Auto polling band - sirf ek baar load hoga
   useEffect(() => {
     loadDefaults();
     loadMessagesForConversation();
@@ -934,7 +933,8 @@ export default function ChatConversationScreen() {
             </View>
           </View>
 
-          {item.text_body ? (
+          {/* ✅ Voice ke upar text hide karo */}
+          {item.type !== "voice" && item.text_body ? (
             <Text style={styles.messageText}>{item.text_body}</Text>
           ) : null}
 
