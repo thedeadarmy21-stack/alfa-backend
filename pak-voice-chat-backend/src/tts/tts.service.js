@@ -1,8 +1,4 @@
-const { ElevenLabsClient } = require("elevenlabs");
-
-const client = new ElevenLabsClient({
-  apiKey: process.env.ELEVENLABS_API_KEY,
-});
+const axios = require("axios");
 
 function normalizeTextForTTS(text) {
   return String(text || "")
@@ -29,42 +25,42 @@ function getVoiceIdByLanguage(lang) {
   return voiceMap[lang] || process.env.ELEVENLABS_VOICE_EN;
 }
 
-async function streamToBuffer(audioStream) {
-  const chunks = [];
-  for await (const chunk of audioStream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
 async function generateSpeechBuffer(text, lang) {
-  console.log("[TTS VERSION] BUFFER ONLY - NO FFMPEG - NO LOCAL FILE");
+  console.log("[TTS VERSION] DIRECT ELEVENLABS API - NO SDK - NO FFMPEG");
 
   const cleanText = normalizeTextForTTS(text);
   if (!cleanText) throw new Error("Empty text passed to TTS");
 
   const voiceId = getVoiceIdByLanguage(lang);
-  if (!voiceId) throw new Error(`No ElevenLabs voice ID configured for ${lang}`);
+  if (!voiceId) throw new Error(`No voice configured for ${lang}`);
 
   const modelId = process.env.ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
 
-  const audioStream = await client.generate({
-    voice: voiceId,
-    model_id: modelId,
-    text: cleanText,
-    voice_settings: {
-      stability: 0.72,
-      similarity_boost: 0.85,
-      style: 0.02,
-      speed: 0.96,
-      use_speaker_boost: true,
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
+
+  const response = await axios.post(
+    url,
+    {
+      text: cleanText,
+      model_id: modelId,
+      voice_settings: {
+        stability: 0.72,
+        similarity_boost: 0.85,
+        style: 0.02,
+        use_speaker_boost: true,
+      },
     },
-  });
+    {
+      responseType: "arraybuffer",
+      headers: {
+        "xi-api-key": process.env.ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+    }
+  );
 
-  const audioBuffer = await streamToBuffer(audioStream);
-  if (!audioBuffer.length) throw new Error("Empty audio buffer returned from ElevenLabs");
-
-  return audioBuffer;
+  return Buffer.from(response.data);
 }
 
 module.exports = {
