@@ -39,12 +39,14 @@ const voiceSchema = z.object({
   conversation_id: z.coerce.number().int().positive(),
   original_lang: z.enum(supportedLanguages),
   target_lang: z.enum(supportedLanguages),
+  translate_mode: z.coerce.boolean().default(false),
 });
 
 const textSchema = z.object({
   conversation_id: z.coerce.number().int().positive(),
   original_lang: z.enum(supportedLanguages),
   target_lang: z.enum(supportedLanguages),
+  translate_mode: z.coerce.boolean().default(false),
   text: z.string().min(1).max(4000),
 });
 
@@ -74,10 +76,6 @@ async function getReceiverId(conversationId, senderId) {
   return res.rows[0]?.user_id || null;
 }
 
-function getVoiceIdByLanguage(language) {
-  return process.env.ELEVENLABS_VOICE_EN;
-}
-
 function ensureTempDir() {
   const tempDir = path.join(os.tmpdir(), "alfa-temp");
   if (!fs.existsSync(tempDir)) {
@@ -97,14 +95,6 @@ function getExtensionFromMimeType(mimeType) {
   return ".webm";
 }
 
-async function uploadLocalFileToCloudinary(filePath, resourceType = "auto") {
-  const result = await cloudinary.uploader.upload(filePath, {
-    resource_type: resourceType,
-  });
-  return result.secure_url;
-}
-
-// ✅ CHANGE: uploadBufferToCloudinary helper add karo
 function uploadBufferToCloudinary(buffer, folder = "alfa-tts") {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
@@ -142,7 +132,7 @@ router.post("/voice", requireAuth, (req, res) => {
         return res.status(400).json({ ok: false, error: "AUDIO_REQUIRED" });
       }
 
-      const { conversation_id, original_lang, target_lang } = parsed.data;
+      const { conversation_id, original_lang, target_lang, translate_mode } = parsed.data;
       const me = req.user.id;
 
       const isMember = await ensureConversationMembership(conversation_id, me);
@@ -194,14 +184,17 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const sourceText = await transcribeAudio(tempInputPath, original_lang);
 
-      const shouldTranslate = target_lang && target_lang !== original_lang;
+      const shouldTranslate =
+        translate_mode === true &&
+        target_lang &&
+        original_lang &&
+        target_lang !== original_lang;
 
       let finalText = sourceText;
       if (shouldTranslate) {
         finalText = await translateText(sourceText, target_lang, original_lang);
       }
 
-      // ✅ CHANGE: Voice route ka TTS block replace karo with buffer approach
       let ttsAudioUrl = null;
 
       if (shouldTranslate) {
@@ -218,7 +211,6 @@ router.post("/voice", requireAuth, (req, res) => {
         }
       }
 
-      // ✅ CHANGE: Voice route me output status smarter karo
       const outputStatus = shouldTranslate
         ? (ttsAudioUrl ? "ready" : "failed")
         : "ready";
@@ -262,8 +254,6 @@ router.post("/voice", requireAuth, (req, res) => {
           fs.unlinkSync(tempInputPath);
         } catch {}
       }
-
-      // ✅ CHANGE: tempTtsPath cleanup hata diya (buffer approach me file nahi banti)
     }
   });
 });
@@ -272,10 +262,11 @@ router.post("/voice", requireAuth, (req, res) => {
 router.post("/text", requireAuth, async (req, res) => {
   try {
     const parsed = textSchema.safeParse(req.body);
-    if (!parsed.success)
+    if (!parsed.success) {
       return res.status(400).json({ ok: false, error: "VALIDATION_ERROR" });
+    }
 
-    const { conversation_id, original_lang, target_lang, text } = parsed.data;
+    const { conversation_id, original_lang, target_lang, translate_mode, text } = parsed.data;
     const me = req.user.id;
 
     const isMember = await ensureConversationMembership(conversation_id, me);
@@ -305,8 +296,9 @@ router.post("/text", requireAuth, async (req, res) => {
     );
 
     const shouldTranslate =
-      !!target_lang &&
-      !!original_lang &&
+      translate_mode === true &&
+      target_lang &&
+      original_lang &&
       target_lang !== original_lang;
 
     let finalText = text;
