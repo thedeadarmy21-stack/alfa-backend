@@ -102,6 +102,7 @@ router.post("/voice", requireAuth, (req, res) => {
     let insertedMessageId = null;
 
     try {
+      console.log("✅ NEW VOICE ROUTE ACTIVE - NO FFMPEG VERSION");
       if (err) {
         return res.status(400).json({ ok: false, error: err.message });
       }

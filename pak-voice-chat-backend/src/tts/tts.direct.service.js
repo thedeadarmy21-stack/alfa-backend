@@ -35,7 +35,7 @@ function uploadAudioBuffer(buffer) {
 }
 
 async function generateTranslatedVoiceUrl(text, lang) {
-  console.log("[TTS DIRECT] No ffmpeg, no local file");
+   console.log("✅ TTS DIRECT SERVICE ACTIVE - AXIOS ONLY");
 
   const cleanText = String(text || "").trim();
   if (!cleanText) throw new Error("Empty TTS text");
