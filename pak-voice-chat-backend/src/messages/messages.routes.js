@@ -13,7 +13,7 @@ const { generateTranslatedVoiceUrl } = require("../tts/tts.direct.service");
 
 const router = express.Router();
 
-/* -------------------- Upload setup (MEMORY) -------------------- */
+/* -------------------- Upload setup -------------------- */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -95,28 +95,11 @@ function getExtensionFromMimeType(mimeType) {
   return ".webm";
 }
 
-function uploadBufferToCloudinary(buffer, folder = "alfa-tts") {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type: "video",
-        folder,
-        format: "mp3",
-      },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result.secure_url);
-      }
-    );
-
-    stream.end(buffer);
-  });
-}
-
 /* -------------------- VOICE -------------------- */
 router.post("/voice", requireAuth, (req, res) => {
   upload.single("audio")(req, res, async (err) => {
     let tempInputPath = null;
+    let insertedMessageId = null;
 
     try {
       if (err) {
@@ -132,7 +115,9 @@ router.post("/voice", requireAuth, (req, res) => {
         return res.status(400).json({ ok: false, error: "AUDIO_REQUIRED" });
       }
 
-      const { conversation_id, original_lang, target_lang, translate_mode } = parsed.data;
+      const { conversation_id, original_lang, target_lang, translate_mode } =
+        parsed.data;
+
       const me = req.user.id;
 
       const isMember = await ensureConversationMembership(conversation_id, me);
@@ -147,6 +132,7 @@ router.post("/voice", requireAuth, (req, res) => {
 
       const tempDir = ensureTempDir();
       const fileExt = getExtensionFromMimeType(req.file.mimetype);
+
       tempInputPath = path.join(
         tempDir,
         `voice_${Date.now()}_${Math.random().toString(36).slice(2)}${fileExt}`
@@ -154,16 +140,24 @@ router.post("/voice", requireAuth, (req, res) => {
 
       await fs.promises.writeFile(tempInputPath, req.file.buffer);
 
-      const originalUploadResult = await cloudinary.uploader.upload(tempInputPath, {
-        resource_type: "auto",
-      });
+      const originalUploadResult = await cloudinary.uploader.upload(
+        tempInputPath,
+        {
+          resource_type: "auto",
+          folder: "alfa-original-voice",
+        }
+      );
 
       const originalAudioUrl = originalUploadResult.secure_url;
 
       const insertRes = await query(
         `INSERT INTO messages (
-          conversation_id, sender_id, type, original_lang,
-          original_audio_url, status
+          conversation_id,
+          sender_id,
+          type,
+          original_lang,
+          original_audio_url,
+          status
         )
         VALUES ($1,$2,'voice',$3,$4,'processing')
         RETURNING *`,
@@ -171,6 +165,7 @@ router.post("/voice", requireAuth, (req, res) => {
       );
 
       const message = insertRes.rows[0];
+      insertedMessageId = message.id;
 
       const sourceText = await transcribeAudio(tempInputPath, original_lang);
 
@@ -180,7 +175,6 @@ router.post("/voice", requireAuth, (req, res) => {
         original_lang &&
         target_lang !== original_lang;
 
-      // ✅ B) shouldTranslate ke baad outputId conditional create karo
       let outputId = null;
 
       if (shouldTranslate) {
@@ -195,40 +189,34 @@ router.post("/voice", requireAuth, (req, res) => {
         outputId = outputInsert.rows[0].id;
       }
 
-      let finalText = sourceText;
-      if (shouldTranslate) {
-        finalText = await translateText(sourceText, target_lang, original_lang);
-      }
-
+      let translatedText = null;
       let ttsAudioUrl = null;
 
       if (shouldTranslate) {
+        translatedText = await translateText(sourceText, target_lang, original_lang);
+
         try {
-          ttsAudioUrl = await generateTranslatedVoiceUrl(finalText, target_lang);
+          ttsAudioUrl = await generateTranslatedVoiceUrl(
+            translatedText,
+            target_lang
+          );
         } catch (ttsError) {
           console.error("[VOICE ROUTE TTS ERROR]", {
             message: ttsError?.message,
-            statusCode: ttsError?.statusCode,
-            body: ttsError?.body,
+            response: ttsError?.response?.data,
             stack: ttsError?.stack,
           });
         }
       }
 
-      // ✅ C) Output update query ko condition me rakho
       if (shouldTranslate && outputId) {
         await query(
           `UPDATE message_outputs
            SET translated_text = $1,
                tts_audio_url = $2,
-               status = $3
-           WHERE id = $4`,
-          [
-            finalText,
-            ttsAudioUrl,
-            ttsAudioUrl ? "ready" : "failed",
-            outputId,
-          ]
+               status = 'ready'
+           WHERE id = $3`,
+          [translatedText, ttsAudioUrl, outputId]
         );
       }
 
@@ -247,10 +235,34 @@ router.post("/voice", requireAuth, (req, res) => {
           text_body: sourceText,
           status: "ready",
         },
+        output: shouldTranslate
+          ? {
+              id: outputId,
+              message_id: message.id,
+              receiver_id: receiverId,
+              target_lang,
+              translated_text: translatedText,
+              tts_audio_url: ttsAudioUrl,
+              status: "ready",
+            }
+          : null,
       });
     } catch (e) {
       console.error("[POST /messages/voice]", e);
-      return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
+
+      if (insertedMessageId) {
+        try {
+          await query(`UPDATE messages SET status='failed' WHERE id=$1`, [
+            insertedMessageId,
+          ]);
+        } catch {}
+      }
+
+      return res.status(500).json({
+        ok: false,
+        error: "SERVER_ERROR",
+        message: e.message,
+      });
     } finally {
       if (tempInputPath && fs.existsSync(tempInputPath)) {
         try {
@@ -269,7 +281,9 @@ router.post("/text", requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: "VALIDATION_ERROR" });
     }
 
-    const { conversation_id, original_lang, target_lang, translate_mode, text } = parsed.data;
+    const { conversation_id, original_lang, target_lang, translate_mode, text } =
+      parsed.data;
+
     const me = req.user.id;
 
     const isMember = await ensureConversationMembership(conversation_id, me);
@@ -279,8 +293,12 @@ router.post("/text", requireAuth, async (req, res) => {
 
     const insertRes = await query(
       `INSERT INTO messages (
-        conversation_id, sender_id, type,
-        original_lang, text_body, status
+        conversation_id,
+        sender_id,
+        type,
+        original_lang,
+        text_body,
+        status
       )
       VALUES ($1,$2,'text',$3,$4,'processing')
       RETURNING *`,
@@ -290,36 +308,35 @@ router.post("/text", requireAuth, async (req, res) => {
     const message = insertRes.rows[0];
     const receiverId = await getReceiverId(conversation_id, me);
 
-    const outputInsert = await query(
-      `INSERT INTO message_outputs 
-       (message_id, receiver_id, target_lang, status)
-       VALUES ($1,$2,$3,'processing')
-       RETURNING id`,
-      [message.id, receiverId, target_lang]
-    );
-
     const shouldTranslate =
       translate_mode === true &&
       target_lang &&
       original_lang &&
       target_lang !== original_lang;
 
-    let finalText = text;
-    if (shouldTranslate) {
-      finalText = await translateText(text, target_lang, original_lang);
-    }
+    let outputId = null;
+    let translatedText = null;
 
-    await query(
-      `UPDATE message_outputs
-       SET translated_text = $1,
-           status = $2
-       WHERE id = $3`,
-      [
-        shouldTranslate ? finalText : null,
-        "ready",
-        outputInsert.rows[0].id,
-      ]
-    );
+    if (shouldTranslate && receiverId) {
+      const outputInsert = await query(
+        `INSERT INTO message_outputs
+         (message_id, receiver_id, target_lang, status)
+         VALUES ($1,$2,$3,'processing')
+         RETURNING id`,
+        [message.id, receiverId, target_lang]
+      );
+
+      outputId = outputInsert.rows[0].id;
+      translatedText = await translateText(text, target_lang, original_lang);
+
+      await query(
+        `UPDATE message_outputs
+         SET translated_text = $1,
+             status = 'ready'
+         WHERE id = $2`,
+        [translatedText, outputId]
+      );
+    }
 
     await query(
       `UPDATE messages
@@ -333,12 +350,12 @@ router.post("/text", requireAuth, async (req, res) => {
       message: {
         ...message,
         status: "ready",
-        translated_text: shouldTranslate ? finalText : null,
+        translated_text: translatedText,
       },
     });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ ok: false });
+    console.error("[POST /messages/text]", e);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
@@ -380,19 +397,20 @@ router.post("/media", requireAuth, (req, res) => {
       }
 
       const uploadResult = await cloudinary.uploader.upload(
-        "data:" +
-          req.file.mimetype +
-          ";base64," +
-          req.file.buffer.toString("base64"),
-        { resource_type: "auto" }
+        `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`,
+        { resource_type: "auto", folder: "alfa-media" }
       );
 
       const mediaUrl = uploadResult.secure_url;
 
       const insertRes = await query(
         `INSERT INTO messages (
-          conversation_id, sender_id, type,
-          original_lang, original_audio_url, status
+          conversation_id,
+          sender_id,
+          type,
+          original_lang,
+          original_audio_url,
+          status
         )
         VALUES ($1,$2,$3,'en',$4,'ready')
         RETURNING *`,
@@ -417,25 +435,30 @@ router.post("/media", requireAuth, (req, res) => {
 router.get("/", requireAuth, async (req, res) => {
   try {
     const parsed = getMessagesSchema.safeParse(req.query);
-    if (!parsed.success)
-      return res.status(400).json({ ok: false });
+    if (!parsed.success) {
+      return res.status(400).json({ ok: false, error: "VALIDATION_ERROR" });
+    }
 
     const { conversation_id } = parsed.data;
     const me = req.user.id;
-    const isMember = await ensureConversationMembership(conversation_id, me);
 
+    const isMember = await ensureConversationMembership(conversation_id, me);
     if (!isMember) {
       return res.status(403).json({ ok: false, error: "NOT_A_MEMBER" });
     }
 
     const result = await query(
-      `SELECT * FROM messages WHERE conversation_id=$1 ORDER BY created_at ASC`,
+      `SELECT *
+       FROM messages
+       WHERE conversation_id=$1
+       ORDER BY created_at ASC`,
       [conversation_id]
     );
 
     return res.json({ ok: true, messages: result.rows });
-  } catch {
-    return res.status(500).json({ ok: false });
+  } catch (e) {
+    console.error("[GET /messages]", e);
+    return res.status(500).json({ ok: false, error: "SERVER_ERROR" });
   }
 });
 
